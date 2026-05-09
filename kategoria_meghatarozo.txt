@@ -1,0 +1,99 @@
+kategórianév,hierarchiaszint
+Zöldség és gyümölcs,1
+Zöldség,2
+Salátafélék,3
+Paradicsom,3
+Paprika,3
+Burgonya,3
+Hagyma,3
+Karfiol és káposzta,3
+Mirelit zöldség,3
+Egyéb zöldség,3
+Fűszernövények,3
+Egzotikus zöldség,3
+Gyökér- és leveleszöldség,3
+Gomba,3
+Tökfélék,3
+Gyümölcs,2
+Almafélék,3
+Bogyós gyümölcsök,3
+Egzotikus gyümölcs,3
+Csonthéjas gyümölcs,3
+Dinnye,3
+Mirelit gyümölcs,3
+Egyéb gyümölcs,3
+Hús és hal,1
+Marhahús,2
+Csirkehús,2
+Pulykahús,2
+Sertéshús,2
+Halak és tenger gyümölcsei,2
+Egyéb hús,2
+Tejtermék és tojás,1
+Joghurt és kefír,2
+Sajt,2
+Vaj/vajkrém/margarin,2
+Tej és tejalapú ital,2
+Tejdesszert,2
+Tejszín/tejhab/tejföl,2
+Tojás,2
+Túró,2
+Mentes élelmiszer,1
+Mentes,2
+Édesség,1
+Desszert,2
+Csokoládé,2
+Kekszes édesség,2
+Egyéb édesség,2
+Sütemény,2
+Cukorka/gumicukor/rágógumi,2
+Tartós élelmiszer,1
+Rizs/tészta/hüvelyes,2
+Müzli és gabonapehely,2
+Fűszerek,2
+Konzerv,2
+Befőtt,3
+Savanyúság,3
+Kenhető krém,3
+Egyéb konzerv,3
+Zöldségkonzerv,3
+Olaj és eset,2
+Snack,2
+Magvak és aszalvány,2
+Instant étel,2
+Szósz,2
+Lekvár és méz,2
+Sütési alapanyagok,2
+Pékárú,1
+Kenyér,2
+Friss pékárú,2
+Egyéb pékárú,2
+Speciális pékárú,2
+Vegán élelmiszer,1
+Növényi kenhető krém,2
+Baba étel,1
+Felvágott és készétel,1
+Mirelit készétel,2
+Felvágott/kolbász/szalámi,2
+Zsír,2
+Szalonna,2
+Hidegkonyha,2
+Ital,1
+Szörp,2
+Gyümölcslé,2
+Zöldséglé,2
+Smoothie,2
+Tea,2
+Üdítő és energiaital,2
+Szénsavas,3
+Szénsavmentes,3
+Energia- és vitaminital,3
+Kávé,2
+Növényi ital,2
+Ásványvíz,2
+Alkoholos ital,1
+Bor,2
+Sör,2
+Tömény,2
+Cider,2
+Egyéb alkoholos ital,2

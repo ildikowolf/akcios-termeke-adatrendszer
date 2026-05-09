@@ -1,0 +1,117 @@
+import csv
+from pathlib import Path
+
+
+BASE_DIR = Path(__file__).resolve().parent
+
+INPUT_FILES = list(BASE_DIR.glob("akcios_termekek_*.csv"))
+
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_FILE = OUTPUT_DIR / "fix_alap_adatok.csv"
+
+fieldnames = [
+    "bolt_neve",
+    "termek_neve",
+    "kezdeti_datum",
+    "vege_datum",
+    "eredeti_ar",
+    "kedvezmenyes_ar",
+    "kartyas_e",
+    "kategoria",
+    "hierarchiaszint",
+    "egyedi_hash",
+]
+
+def normalize_date(date_text):
+    date_text = date_text.strip()
+
+    # 2026.04.16 → 2026-04-16
+    if "." in date_text:
+        parts = date_text.split(".")
+        if len(parts) >= 3:
+            year = parts[0]
+            month = parts[1].zfill(2)
+            day = parts[2].zfill(2)
+            return f"{year}-{month}-{day}"
+
+    # már jó formátum (pl 2026-04-16)
+    if "-" in date_text:
+        parts = date_text.split("-")
+        if len(parts) >= 3:
+            year = parts[0]
+            month = parts[1].zfill(2)
+            day = parts[2].zfill(2)
+            return f"{year}-{month}-{day}"
+
+    return date_text
+
+def split_date_range(text):
+    if not text:
+        return "", ""
+
+    text = text.strip()
+    parts = text.split("-")
+
+    if len(parts) != 2:
+        return text, ""
+
+    start = parts[0].strip()
+    end = parts[1].strip()
+
+    year = ""
+    if "." in start:
+        year = start.split(".")[0]
+    elif "-" in start:
+        year = start.split("-")[0]
+
+    if year and len(end) <= 5:
+        if "." in start:
+            end = f"{year}.{end}"
+        else:
+            end = f"{year}-{end}"
+
+    start = normalize_date(start)
+    end = normalize_date(end)
+
+    return start, end
+
+def main() -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    output_rows = []
+
+    for input_file in INPUT_FILES:
+        if not input_file.exists():
+            print(f"Nem található a bemeneti fájl: {input_file}")
+            continue
+
+        with open(input_file, "r", encoding="utf-8-sig", newline="") as infile:
+            reader = csv.DictReader(infile)
+
+            for row in reader:
+                date_text = row.get("akcio_idotartama") or ""
+                kezdeti_datum, vege_datum = split_date_range(date_text)
+
+                output_rows.append({
+                    "bolt_neve": (row.get("bolt_neve") or "").strip(),
+                    "termek_neve": (row.get("termek_neve") or "").strip(),
+                    "kezdeti_datum": kezdeti_datum,
+                    "vege_datum": vege_datum,
+                    "eredeti_ar": (row.get("eredeti_ar") or "").strip(),
+                    "kedvezmenyes_ar": (row.get("kedvezmenyes_ar") or "").strip(),
+                    "kartyas_e": (row.get("kartyas_e") or "").strip(),
+                    "kategoria": (row.get("kategoria") or "").strip(),
+                    "hierarchiaszint": (row.get("hierarchiaszint") or "").strip(),
+                    "egyedi_hash": (row.get("egyedi_hash") or "").strip(),
+                })
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline="") as outfile:
+        writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(output_rows)
+
+    print(f"Kész. Mentett sorok száma: {len(output_rows)}")
+    print(f"Kimeneti fájl: {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    main()

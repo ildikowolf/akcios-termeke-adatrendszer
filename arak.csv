@@ -1,0 +1,381 @@
+import pandas as pd
+import re
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR.mkdir(exist_ok=True)
+INPUT_FILE = BASE_DIR / "jobban_szetszedett_leirasok.csv"
+
+
+# Csak ezekkel az egységekkel foglalkozunk.
+SULY_EGYSEGEK = {"g", "dkg", "kg"}
+URTARTALOM_EGYSEGEK = {"ml", "cl", "dl", "l"}
+DARAB_EGYSEGEK = {"db", "darab", "csomag", "doboz", "csomó", "cs"}
+HOSSZ_EGYSEGEK = {"cm"}
+
+# Összetett kiszerelések második része, amit levágunk: 500g/doboz -> 500g
+OSSZETETT_MASODIK_RESZ = {
+    "cs", "darab", "db", "doboz", "tégely", "uveg", "üveg", "csomag"
+}
+
+
+def szam_float(szoveg):
+    """Szám egységesítése: 1,5 -> 1.5, majd float."""
+    return float(str(szoveg).replace(",", "."))
+
+
+def szep_szam(szam):
+    """
+    1.0 helyett 1-et ír vissza, de 1.25 marad 1.25.
+    """
+    szam = round(float(szam), 6)
+    if szam.is_integer():
+        return str(int(szam))
+    return str(szam).rstrip("0").rstrip(".")
+
+
+def normalizal_kiszereles_ertek(ertek, egyseg):
+    """
+    Kiszerelés / mennyiség normalizálása:
+    1000g -> 1 kg
+    10dkg -> 0.1 kg
+    500ml -> 0.5 l
+    150cl -> 1.5 l
+    2darab -> 2 db
+    1csomag -> 1 db
+    20cm -> 20 cm, hosszegység marad
+    """
+    ertek = szam_float(ertek)
+    egyseg = egyseg.lower().strip()
+
+    if egyseg == "g":
+        return szep_szam(ertek / 1000), "kg", "tömeg"
+
+    if egyseg == "dkg":
+        return szep_szam(ertek / 100), "kg", "tömeg"
+
+    if egyseg == "kg":
+        return szep_szam(ertek), "kg", "tömeg"
+
+    if egyseg == "ml":
+        return szep_szam(ertek / 1000), "l", "űrtartalom"
+
+    if egyseg == "cl":
+        return szep_szam(ertek / 100), "l", "űrtartalom"
+
+    if egyseg == "dl":
+        return szep_szam(ertek / 10), "l", "űrtartalom"
+
+    if egyseg == "l":
+        return szep_szam(ertek), "l", "űrtartalom"
+
+    if egyseg in DARAB_EGYSEGEK:
+        return szep_szam(ertek), "db", "darabszám"
+
+    if egyseg in HOSSZ_EGYSEGEK:
+        return szep_szam(ertek), egyseg, "hosszúság"
+
+    return szep_szam(ertek), egyseg, "mennyiség"
+
+
+def normalizal_egysegar_ertek(ertek, egyseg, darabszam=None):
+    """
+    Egységár normalizálása:
+    1799.33Ft/kg -> 1799.33 Ft/kg
+    399Ft/l -> 399 Ft/l
+    50Ft/db -> 50 Ft/db
+    399Ft/2db -> 199.5 Ft/db
+    599Ft/csomag -> 599 Ft/db
+    899Ft/csomó -> 899 Ft/db
+
+    Fontos: Ft/g és Ft/ml esetén átváltunk Ft/kg-ra vagy Ft/l-re.
+    """
+    ertek = szam_float(ertek)
+    egyseg = egyseg.lower().strip()
+
+    if egyseg == "g":
+        return szep_szam(ertek * 1000), "Ft/kg", "ár/kg"
+
+    if egyseg == "kg":
+        return szep_szam(ertek), "Ft/kg", "ár/kg"
+
+    if egyseg == "ml":
+        return szep_szam(ertek * 1000), "Ft/l", "ár/l"
+
+    if egyseg == "l":
+        return szep_szam(ertek), "Ft/l", "ár/l"
+
+    if egyseg in DARAB_EGYSEGEK:
+        if darabszam:
+            return szep_szam(ertek / int(darabszam)), "Ft/db", "ár/db"
+        return szep_szam(ertek), "Ft/db", "ár/db"
+
+    # minden egyéb nem súly / nem űrtartalom egységár legyen Ft/db
+    return szep_szam(ertek), "Ft/db", "ár/db"
+
+
+def levag_osszetett_kiszereles_veget(szoveg):
+    """
+    Összetett kiszerelésnél levágja a / jel utáni részt:
+    500g/doboz -> 500g
+    0.75l/üveg -> 0.75l
+    16db/doboz -> 16db
+    Csak akkor vág, ha a / utáni egység a megengedett listában van.
+    """
+    lower = str(szoveg).strip().lower().replace(",", ".")
+
+    match = re.fullmatch(
+        r"(\d+(?:\.\d+)?\s*(?:kg|g|dkg|l|dl|cl|ml|db|darab|csomag|doboz|csomó|cm))\s*/\s*([a-záéíóöőúüű]+)",
+        lower
+    )
+
+    if match and match.group(2) in OSSZETETT_MASODIK_RESZ:
+        return match.group(1)
+
+    return lower
+
+
+def parse_egysegar(lower):
+    """
+    Egységár felismerése.
+    Kezeli ezeket is:
+    Ft/kg, Ft/l, Ft/db, Ft/csomag, Ft/csomó,
+    Ft/2db, Ft/3db, Ft/4db, Ft/6db, Ft/1cs, Ft/2cs, Ft/3cs
+
+    Egységárnál a darabszam mező alapértelmezetten 1 marad, mert ez nem kiszerelés,
+    hanem ellenőrző árjellegű adat.
+    """
+    match = re.fullmatch(
+        r"(\d+(?:\.\d+)?)\s*ft\s*/\s*(?:(\d+)\s*)?(kg|g|l|ml|db|darab|csomag|csomó|cs)",
+        lower
+    )
+
+    if not match:
+        return None
+
+    ar = match.group(1)
+    ar_darabszam = match.group(2)
+    egyseg = match.group(3)
+
+    normal_ertek, normal_egyseg, tulajdonsag = normalizal_egysegar_ertek(ar, egyseg, ar_darabszam)
+    return "egységár", tulajdonsag, normal_ertek, normal_egyseg, 1
+
+
+def parse_tobbszoros_kiszereles(lower):
+    """
+    Többszörös kiszerelés felismerése.
+
+    Példák:
+    6x100ml -> ertek=0.1, egyseg=l, darabszam=6
+    4x0.2l -> ertek=0.2, egyseg=l, darabszam=4
+    5x0.037kg -> ertek=0.037, egyseg=kg, darabszam=5
+    3x1db -> ertek=1, egyseg=db, darabszam=3
+    """
+    match = re.fullmatch(
+        r"(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(kg|g|dkg|l|dl|cl|ml|db|darab|csomag|doboz|csomó|cm)",
+        lower
+    )
+
+    if not match:
+        return None
+
+    darabszam = int(match.group(1))
+    egysegenkenti_ertek = match.group(2)
+    egyseg = match.group(3)
+
+    normal_ertek, normal_egyseg, tulajdonsag = normalizal_kiszereles_ertek(egysegenkenti_ertek, egyseg)
+    return "kiszerelés", tulajdonsag, normal_ertek, normal_egyseg, darabszam
+
+
+def parse_kiszereles(lower):
+    """
+    Egyszerű és összetett kiszerelés felismerése:
+    250g -> ertek=0.25, egyseg=kg, darabszam=1
+    1kg -> ertek=1, egyseg=kg, darabszam=1
+    500ml -> ertek=0.5, egyseg=l, darabszam=1
+    2darab -> ertek=2, egyseg=db, darabszam=1
+    500g/doboz -> ertek=0.5, egyseg=kg, darabszam=1
+    """
+    lower = levag_osszetett_kiszereles_veget(lower)
+
+    match = re.fullmatch(
+        r"(\d+(?:\.\d+)?)\s*(kg|g|dkg|l|dl|cl|ml|db|darab|csomag|doboz|csomó|cm)",
+        lower
+    )
+
+    if not match:
+        return None
+
+    ertek = match.group(1)
+    egyseg = match.group(2)
+
+    normal_ertek, normal_egyseg, tulajdonsag = normalizal_kiszereles_ertek(ertek, egyseg)
+    return "kiszerelés", tulajdonsag, normal_ertek, normal_egyseg, 1
+
+
+def normalizal_sor(darabolt_ertek):
+    eredeti = str(darabolt_ertek).strip()
+    lower = eredeti.lower().replace(",", ".")
+
+    if not eredeti:
+        return "zaj", "", "", "", 1
+
+    # cikkszám / zaj
+    if re.fullmatch(r"\d{4,}", eredeti):
+        return "zaj", "azonosítatlan", eredeti, "", 1
+
+    # visszaváltási díj / betétdíj
+    match = re.search(r"(visszaváltási díj|betétdíj).*?(\d+(?:[,.]\d+)?)\s*ft", lower)
+    if match:
+        return "betétdíj", "visszaváltási díj", match.group(2).replace(",", "."), "Ft", 1
+
+    # egységárak normalizálása
+    parsed = parse_egysegar(lower)
+    if parsed:
+        return parsed
+
+    # sima ár: 999Ft
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*ft", lower)
+    if match:
+        return "ár", "ár", match.group(1), "Ft", 1
+
+    # többszörös kiszerelés: 6x100ml, 4x0.2l, 5x0.037kg
+    parsed = parse_tobbszoros_kiszereles(lower)
+    if parsed:
+        return parsed
+
+    # egyszerű és összetett kiszerelés: 250g / 500g/doboz
+    parsed = parse_kiszereles(lower)
+    if parsed:
+        return parsed
+
+    # származási hely
+    match = re.search(r"származási hely\s+(.+)", lower)
+    if match:
+        orszag = match.group(1).strip().capitalize()
+        return "származás", "ország", orszag, "", 1
+
+    # akciós/kedvezményes szövegek
+    kedvezmeny_mintak = [
+        r"vásárlása\s+esetén",
+        r"legalább",
+        r"minden\s+második",
+        r"termék\s+ára",
+        r"kedvezmény",
+        r"\d+\s*\+\s*\d+",
+        r"\d+\s*[-]?\s*at\s+fizet",
+        r"\d+\s*[-]?\s*et\s+kap",
+        r"fizet\s+\d+",
+        r"kap\s+\d+",
+    ]
+
+    if any(re.search(minta, lower) for minta in kedvezmeny_mintak):
+        return "kedvezmény", "kedvezmény típusa", eredeti, "", 1
+
+    # minden más tulajdonság
+    return "tulajdonság", "jellemző", eredeti, "", 1
+
+
+def tipus_normalizalas(tipus):
+    """
+    Adatbázis-logika szerinti típusok szűkítése.
+    """
+    mapping = {
+        "betétdíj": "tulajdonság",
+        "származás": "tulajdonság",
+        "tulajdonság": "tulajdonság",
+
+        "egységár": "egységár",
+        "ár": "ár",
+        "kiszerelés": "kiszerelés",
+
+        "kedvezmény": "kedvezmény_tipus",
+
+        "zaj": "zaj"
+    }
+
+    return mapping.get(tipus, "tulajdonság")
+
+
+def save_subset(df, tipus, filename, columns):
+    subset = df[df["tipus"] == tipus].copy()
+
+    if subset.empty:
+        print(f"Nincs ilyen típus: {tipus}")
+        return
+
+    subset = subset[columns]
+    subset.to_csv(OUTPUT_DIR / filename, index=False, encoding="utf-8-sig")
+
+    print(f"{filename}: {len(subset)} sor")
+
+
+def main():
+    df = pd.read_csv(INPUT_FILE, encoding="utf-8-sig")
+
+    df[["tipus", "tulajdonsag", "ertek", "egyseg", "darabszam"]] = df["darabolt_ertek"].apply(
+        lambda x: pd.Series(normalizal_sor(x))
+    )
+
+    df["tipus"] = df["tipus"].apply(tipus_normalizalas)
+
+    df = df[
+        [
+            "tipus",
+            "tulajdonsag",
+            "ertek",
+            "egyseg",
+            "darabszam",
+            "egyedi_hash"
+        ]
+    ]
+
+    save_subset(
+        df,
+        "kiszerelés",
+        "kiszerelesek.csv",
+        ["tulajdonsag", "ertek", "egyseg", "darabszam", "egyedi_hash"]
+    )
+
+    save_subset(
+        df,
+        "egységár",
+        "egysegarak.csv",
+        ["ertek", "egyseg", "egyedi_hash"]
+    )
+
+    save_subset(
+        df,
+        "tulajdonság",
+        "tulajdonsagok.csv",
+        ["ertek", "egyedi_hash"]
+    )
+
+    save_subset(
+        df,
+        "ár",
+        "arak.csv",
+        ["ertek", "egyedi_hash"]
+    )
+
+    save_subset(
+        df,
+        "kedvezmény_tipus",
+        "kedvezmeny_tipusok.csv",
+        ["ertek", "egyedi_hash"]
+    )
+
+    save_subset(
+        df,
+        "zaj",
+        "zaj.csv",
+        ["tulajdonsag", "ertek", "egyedi_hash"]
+    )
+
+    print(df["tipus"].value_counts())
+    print("Minden fájl elkészült.")
+
+
+if __name__ == "__main__":
+    main()
